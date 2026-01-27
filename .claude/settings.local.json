@@ -4,7 +4,9 @@
       "WebFetch(domain:github.com)",
       "Bash(cd:*)",
       "WebSearch",
-      "Bash(git fetch:*)"
+      "Bash(git fetch:*)",
+      "WebFetch(domain:docs.kraken.com)",
+      "WebFetch(domain:support.kraken.com)"
     ]
   }
 }

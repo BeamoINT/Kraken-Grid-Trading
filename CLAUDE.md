@@ -4,17 +4,119 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Kraken Grid Trading - An automated grid trading bot for the Kraken cryptocurrency exchange.
+Adaptive AI Grid Trading Bot for Kraken - An autonomous cryptocurrency trading bot that uses machine learning to detect market regimes and adapt grid trading behavior accordingly. Designed for $400 starting capital on a Kraken business account.
 
-## Project Status
+## Quick Commands
 
-This project is in initial setup phase. The structure and commands below should be updated as the project develops.
+```bash
+# Setup
+python -m venv venv
+source venv/bin/activate  # or venv\Scripts\activate on Windows
+pip install -r requirements.txt
+cp .env.example .env      # Then edit with your API keys
+cp config/config.yaml.example config/config.yaml
 
-## Architecture Notes
+# Download historical data
+python scripts/download_historical.py --pairs XBTUSD
 
-*To be documented as the project develops. Key areas to document:*
-- Kraken API integration approach
-- Grid calculation and order placement logic
-- Risk management and position sizing
-- Data persistence strategy
-- Paper trading vs live trading modes
+# Compute features
+python scripts/compute_features.py --pairs XBTUSD --timeframes 1m 5m 15m 1h 4h
+
+# Train model
+python scripts/train_model.py
+
+# Run bot (paper trading)
+python -m src.main config/config.yaml
+
+# Run tests
+pytest tests/
+```
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        ORCHESTRATOR                             │
+│  Coordinates all components, handles startup/shutdown           │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
+│  │ Data Ingester│  │ ML Inference │  │   Grid Manager       │  │
+│  │ - WebSocket  │  │ - Features   │  │ - Calculate levels   │  │
+│  │ - OHLCV      │  │ - Regime     │  │ - Place orders       │  │
+│  └──────────────┘  └──────────────┘  └──────────────────────┘  │
+│         │                  │                    │               │
+│         └──────────────────┼────────────────────┘               │
+│                            ▼                                    │
+│                   ┌──────────────┐                              │
+│                   │ Risk Manager │                              │
+│                   │ - Stop-loss  │                              │
+│                   │ - Drawdown   │                              │
+│                   └──────────────┘                              │
+│                            │                                    │
+│                            ▼                                    │
+│                   ┌──────────────┐                              │
+│                   │ Kraken API   │                              │
+│                   └──────────────┘                              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## Key Modules
+
+| Module | Purpose |
+|--------|---------|
+| `src/api/` | Kraken REST + WebSocket clients with rate limiting |
+| `src/data/` | Historical data download, OHLCV aggregation, Parquet storage |
+| `src/features/` | Technical indicator computation (ATR, ADX, BBands, etc.) |
+| `src/models/` | XGBoost regime classifier with walk-forward validation |
+| `src/grid/` | Adaptive grid calculation and order management |
+| `src/core/` | Orchestrator and risk management |
+| `src/persistence/` | SQLite database for state and order tracking |
+| `config/` | Configuration dataclasses and YAML loading |
+
+## Market Regimes
+
+The ML model classifies markets into 5 regimes, each with different grid behavior:
+
+| Regime | Detection | Grid Action |
+|--------|-----------|-------------|
+| RANGING | ADX < 25 | Normal grid, tighter spacing |
+| TRENDING_UP | ADX > 25, +DI > -DI | Shift up, fewer buys |
+| TRENDING_DOWN | ADX > 25, -DI > +DI | Pause buys, stop-loss |
+| HIGH_VOLATILITY | ATR > 80th percentile | Widen spacing |
+| BREAKOUT | BB breach + volume spike | Pause entirely |
+
+## Kraken API Notes
+
+- **Historical Data**: Use `/0/public/Trades` endpoint (unlimited) instead of `/0/public/OHLC` (720 candle limit)
+- **Rate Limiting**: Intermediate tier = 20 max counter, 0.5/sec decay. Use token bucket.
+- **Authentication**: HMAC-SHA512 with nonce (millisecond timestamp)
+- **Pair Names**: Kraken uses XBTUSD (not BTCUSD) for Bitcoin
+
+## Risk Rules
+
+- Max 2% capital risk per grid level
+- Stop-loss: 15% below lowest grid
+- Max drawdown: 20% halts trading
+- Max exposure: 70% in positions
+- Pause if model confidence < 60%
+
+## Data Flow
+
+```
+Kraken Trades API → Raw Trades (Parquet) → OHLCV → Features → Regime Labels
+                                                        ↓
+                                              ML Model Training
+                                                        ↓
+Live WebSocket → Real-time Features → Regime Prediction → Grid Adjustment
+```
+
+## Configuration
+
+- **API credentials**: Set in `.env` file (never commit)
+- **Trading parameters**: Set in `config/config.yaml`
+- **Environment overrides**: `KRAKEN_*` env vars override YAML values
+
+## Paper Trading
+
+Set `PAPER_TRADING=true` in `.env` or `validate: true` in AddOrder requests. Orders are validated but not executed.

@@ -1,0 +1,160 @@
+# Kraken Grid Trading Bot Configuration
+# Copy to config.yaml and customize
+
+# ===========================================
+# TRADING PAIR CONFIGURATION
+# ===========================================
+trading:
+  pair: "XBTUSD"               # Kraken pair name
+  base_currency: "XBT"         # Base asset (BTC on Kraken is XBT)
+  quote_currency: "USD"        # Quote asset
+
+# ===========================================
+# GRID PARAMETERS
+# ===========================================
+grid:
+  num_levels: 10               # Number of grid levels
+  range_percent: 5.0           # Grid range: +/- 5% from center
+  order_size_quote: 40.0       # USD per grid level ($40 x 10 = $400)
+  spacing: "equal"             # "equal" or "geometric"
+  rebalance_threshold: 0.1     # 10% price deviation triggers rebalance
+
+# ===========================================
+# RISK MANAGEMENT (CRITICAL)
+# ===========================================
+risk:
+  max_position_percent: 70     # Max 70% of capital in positions
+  max_open_orders: 20          # Maximum concurrent open orders
+  stop_loss_percent: 15.0      # Emergency stop loss below lowest grid
+  max_drawdown_percent: 20.0   # Halt trading if drawdown exceeds 20%
+  min_confidence: 0.6          # Pause if model confidence < 60%
+  order_risk_percent: 2.0      # Max 2% capital risk per order
+
+# ===========================================
+# API CONFIGURATION
+# ===========================================
+api:
+  # Rate limiting tier (determines call limits)
+  # starter: 15 max counter, 0.33/sec decay
+  # intermediate: 20 max counter, 0.5/sec decay (default)
+  # pro: 20 max counter, 1.0/sec decay
+  tier: "intermediate"
+
+  rate_limit_buffer: 0.8       # Use 80% of rate limit capacity
+  request_timeout: 30          # Seconds before API timeout
+
+# ===========================================
+# WEBSOCKET CONFIGURATION
+# ===========================================
+websocket:
+  reconnect_delay: 5           # Initial reconnect delay (seconds)
+  max_reconnect_delay: 300     # Max backoff delay (5 minutes)
+  ping_interval: 30            # Ping every 30 seconds
+  ohlc_interval: 5             # Subscribe to 5-minute candles
+
+# ===========================================
+# DATA STORAGE
+# ===========================================
+storage:
+  base_path: "data"
+  raw_trades_dir: "raw"
+  ohlcv_dir: "ohlcv"
+  features_dir: "features"
+  models_dir: "models"
+  compression: "snappy"        # Parquet compression
+
+# ===========================================
+# DATABASE
+# ===========================================
+database:
+  path: "data/trading.db"
+  backup_interval: 3600        # Backup every hour
+
+# ===========================================
+# FEATURE ENGINEERING
+# ===========================================
+features:
+  # Lookback windows
+  short_window: 14
+  medium_window: 50
+  long_window: 200
+
+  # Technical indicators
+  atr_period: 14
+  bb_period: 20
+  bb_std: 2.0
+  adx_period: 14
+
+  # Volume
+  vwap_period: 20
+  volume_ma_period: 20
+
+# ===========================================
+# REGIME DETECTION
+# ===========================================
+regime:
+  # ADX thresholds
+  adx_trending_threshold: 25.0
+  adx_strong_trend_threshold: 40.0
+
+  # Volatility
+  high_vol_percentile: 80.0
+  low_vol_percentile: 20.0
+
+  # Moving averages
+  ma_short: 20
+  ma_long: 50
+
+  # Breakout detection
+  breakout_vol_multiplier: 2.0
+  breakout_atr_multiplier: 1.5
+
+  # Forward look for labeling
+  forward_look: 5
+
+# ===========================================
+# ML MODEL
+# ===========================================
+model:
+  # Model type
+  type: "xgboost"              # xgboost, random_forest, ensemble
+
+  # Training
+  lookback_candles: 100        # Input window size
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
+
+  # XGBoost parameters
+  xgboost:
+    n_estimators: 100
+    max_depth: 6
+    learning_rate: 0.1
+    min_child_weight: 1
+    subsample: 0.8
+    colsample_bytree: 0.8
+
+# ===========================================
+# MONITORING & LOGGING
+# ===========================================
+monitoring:
+  health_check_interval: 60    # Health check every minute
+  metrics_interval: 300        # Metrics every 5 minutes
+  daily_summary_hour: 0        # UTC hour for daily summary
+
+logging:
+  level: "INFO"                # DEBUG, INFO, WARNING, ERROR
+  file_path: "logs/trading.log"
+  max_size_mb: 10
+  backup_count: 5
+  json_format: true            # Structured JSON logging
+
+# ===========================================
+# ALERTS (OPTIONAL)
+# ===========================================
+alerts:
+  enabled: false
+  # Uncomment and configure if needed:
+  # telegram:
+  #   bot_token: ""
+  #   chat_id: ""
