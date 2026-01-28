@@ -165,8 +165,8 @@ class TradeIngestionPipeline:
             )
 
             if file_path.exists():
-                # Read existing and merge
-                existing = pq.read_table(file_path)
+                # Read existing and merge (use schema to avoid dictionary encoding mismatch)
+                existing = pq.read_table(file_path, schema=self.PARQUET_SCHEMA)
                 combined = pa.concat_tables([existing, table])
 
                 # Deduplicate by timestamp_ns

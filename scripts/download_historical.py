@@ -79,7 +79,7 @@ def create_progress_callback():
 
     def close():
         nonlocal pbar
-        if pbar:
+        if pbar is not None:
             pbar.close()
 
     return callback, close
