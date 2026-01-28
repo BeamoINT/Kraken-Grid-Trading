@@ -34,7 +34,6 @@ from src.grid import (
     GridExecutor,
     Rebalancer,
     GridParameters,
-    GridSpacing,
 )
 from src.regime import MarketRegime
 from .portfolio import Portfolio
