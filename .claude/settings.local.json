@@ -6,7 +6,17 @@
       "WebSearch",
       "Bash(git fetch:*)",
       "WebFetch(domain:docs.kraken.com)",
-      "WebFetch(domain:support.kraken.com)"
+      "WebFetch(domain:support.kraken.com)",
+      "Bash(tree:*)",
+      "Bash(python3:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(ssh:*)",
+      "Bash(ls:*)",
+      "Bash(chmod:*)",
+      "Bash(ssh-keygen:*)"
     ]
   }
 }
