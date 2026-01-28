@@ -181,6 +181,27 @@ class DatabaseConfig:
         return f"sqlite+aiosqlite:///{self.path}"
 
 
+@dataclass
+class RecoveryConfig:
+    """Crash recovery and graceful shutdown configuration."""
+
+    # State age limits
+    max_state_age_seconds: int = 86400  # 24 hours (default)
+    warn_state_age_seconds: int = 3600  # 1 hour (warning only)
+
+    # Reconciliation
+    always_reconcile: bool = True  # Always reconcile with exchange on startup
+    reconcile_timeout_seconds: float = 60.0
+
+    # PID lock
+    pid_lock_path: str = "data/trading.pid"
+    stale_lock_timeout_seconds: int = 300  # 5 minutes
+
+    # Write-ahead log
+    enable_wal: bool = True
+    wal_retention_hours: int = 24
+
+
 # ===========================================
 # FEATURE ENGINEERING CONFIGURATION
 # ===========================================
@@ -335,6 +356,7 @@ class BotConfig:
     # Data configs
     storage: StorageConfig = field(default_factory=StorageConfig)
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
+    recovery: RecoveryConfig = field(default_factory=RecoveryConfig)
 
     # ML configs
     features: FeatureConfig = field(default_factory=FeatureConfig)

@@ -24,7 +24,7 @@ from typing import Optional
 
 from config.settings import BotConfig
 from src.utils.config_loader import ConfigLoader
-from src.core import Orchestrator, OrchestratorConfig
+from src.core import Orchestrator, OrchestratorConfig, ProcessLock, ProcessLockError
 from src.core.orchestrator import OrchestratorState
 
 
@@ -132,6 +132,25 @@ Examples:
         help="Log file path (default: none, console only)",
     )
 
+    parser.add_argument(
+        "--force-start",
+        action="store_true",
+        help="Force start even if another instance appears to be running",
+    )
+
+    parser.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="Skip state restoration (but keep history)",
+    )
+
+    parser.add_argument(
+        "--max-state-age",
+        type=int,
+        default=86400,
+        help="Maximum state age in seconds for resume (default: 86400 = 24h)",
+    )
+
     return parser.parse_args()
 
 
@@ -172,6 +191,7 @@ async def main(args: argparse.Namespace) -> int:
         Exit code (0 for success, non-zero for error)
     """
     logger = logging.getLogger(__name__)
+    process_lock = None
 
     # Load configuration
     try:
@@ -206,49 +226,79 @@ async def main(args: argparse.Namespace) -> int:
         print("Dry run complete - configuration is valid")
         return 0
 
-    # Safety check for live trading
-    if not config.paper_trading:
-        print("\n" + "=" * 50)
-        print("WARNING: LIVE TRADING MODE")
-        print("Real orders will be placed on Kraken.")
-        print("=" * 50)
-
-        # Check for API credentials
-        import os
-        if not os.getenv("KRAKEN_API_KEY") or not os.getenv("KRAKEN_API_SECRET"):
-            print("Error: KRAKEN_API_KEY and KRAKEN_API_SECRET must be set")
-            return 1
-
-        print("\nPress Ctrl+C within 5 seconds to abort...")
-        try:
-            await asyncio.sleep(5)
-        except asyncio.CancelledError:
-            print("\nAborted")
-            return 0
-        print("Starting live trading...")
-
-    # Create orchestrator
-    orchestrator = Orchestrator(config)
-
-    # Track if shutdown was requested
-    shutdown_requested = False
-
-    # Setup signal handlers
-    def signal_handler(sig, frame):
-        nonlocal shutdown_requested
-        if shutdown_requested:
-            logger.warning("Force shutdown requested")
-            sys.exit(1)
-
-        logger.info(f"Received signal {sig}, initiating graceful shutdown...")
-        shutdown_requested = True
-        asyncio.create_task(orchestrator.stop())
-
-    # Register signal handlers
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
+    # Acquire process lock to prevent multiple instances
+    lock_path = getattr(config.recovery, "pid_lock_path", "data/trading.pid") if hasattr(config, "recovery") else "data/trading.pid"
+    process_lock = ProcessLock(lock_path)
 
     try:
+        process_lock.acquire(force=args.force_start)
+        logger.info("Acquired process lock")
+    except ProcessLockError as e:
+        print(f"Error: {e}")
+        print("Use --force-start to override (ensure previous instance is dead)")
+        return 1
+
+    orchestrator = None
+    try:
+        # Safety check for live trading
+        if not config.paper_trading:
+            print("\n" + "=" * 50)
+            print("WARNING: LIVE TRADING MODE")
+            print("Real orders will be placed on Kraken.")
+            print("=" * 50)
+
+            # Check for API credentials
+            import os
+            if not os.getenv("KRAKEN_API_KEY") or not os.getenv("KRAKEN_API_SECRET"):
+                print("Error: KRAKEN_API_KEY and KRAKEN_API_SECRET must be set")
+                return 1
+
+            print("\nPress Ctrl+C within 5 seconds to abort...")
+            try:
+                await asyncio.sleep(5)
+            except asyncio.CancelledError:
+                print("\nAborted")
+                return 0
+            print("Starting live trading...")
+
+        # Create orchestrator config with recovery settings
+        orch_config = OrchestratorConfig(
+            max_state_age_seconds=args.max_state_age,
+            skip_state_restore=args.no_resume,
+        )
+
+        # Create orchestrator
+        orchestrator = Orchestrator(config, orch_config)
+
+        # Track shutdown state for three-stage handling
+        shutdown_requested = False
+        force_shutdown_requested = False
+
+        # Setup signal handlers with three-stage shutdown
+        def signal_handler(sig, frame):
+            nonlocal shutdown_requested, force_shutdown_requested
+
+            if force_shutdown_requested:
+                # Third signal - immediate exit
+                logger.critical("Third signal received - immediate exit")
+                sys.exit(1)
+
+            if shutdown_requested:
+                # Second signal - emergency stop (save state only, skip order cancel)
+                logger.warning("Second signal received - emergency shutdown (saving state only)")
+                force_shutdown_requested = True
+                asyncio.create_task(orchestrator.stop(cancel_orders=False, emergency=True))
+                return
+
+            # First signal - graceful shutdown
+            logger.info(f"Received signal {sig}, initiating graceful shutdown...")
+            shutdown_requested = True
+            asyncio.create_task(orchestrator.stop())
+
+        # Register signal handlers
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+
         # Initialize
         logger.info("Initializing orchestrator...")
         await orchestrator.initialize()
@@ -274,16 +324,24 @@ async def main(args: argparse.Namespace) -> int:
 
     except KeyboardInterrupt:
         logger.info("Keyboard interrupt received")
-        await orchestrator.stop()
+        if orchestrator:
+            await orchestrator.stop()
         return 0
 
     except Exception as e:
         logger.exception(f"Fatal error: {e}")
         try:
-            await orchestrator.stop(cancel_orders=True)
+            if orchestrator:
+                await orchestrator.stop(cancel_orders=True)
         except Exception as stop_error:
             logger.error(f"Error during shutdown: {stop_error}")
         return 1
+
+    finally:
+        # Always release the process lock
+        if process_lock:
+            process_lock.release()
+            logger.info("Released process lock")
 
 
 def run() -> None:

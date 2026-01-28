@@ -161,6 +161,17 @@ class StateManager:
         position_qty TEXT
     );
 
+    -- Pending operations (Write-Ahead Log for crash recovery)
+    CREATE TABLE IF NOT EXISTS pending_operations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        operation_type TEXT NOT NULL,
+        operation_data TEXT NOT NULL,
+        grid_id TEXT,
+        created_at TEXT NOT NULL,
+        completed_at TEXT,
+        status TEXT DEFAULT 'pending'
+    );
+
     -- Create indexes
     CREATE INDEX IF NOT EXISTS idx_orders_grid_id ON orders(grid_id);
     CREATE INDEX IF NOT EXISTS idx_orders_state ON orders(state);
@@ -169,6 +180,8 @@ class StateManager:
     CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
     CREATE INDEX IF NOT EXISTS idx_metrics_session ON metrics(session_id);
     CREATE INDEX IF NOT EXISTS idx_metrics_timestamp ON metrics(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_pending_ops_status ON pending_operations(status);
+    CREATE INDEX IF NOT EXISTS idx_pending_ops_grid_id ON pending_operations(grid_id);
     """
 
     def __init__(self, db_path: str = "data/trading.db"):
@@ -774,4 +787,135 @@ class StateManager:
             conn.commit()
 
         logger.info(f"Cleaned up old data: {deleted}")
+        return deleted
+
+    # === Write-Ahead Log (WAL) Operations ===
+
+    def log_pending_operation(
+        self,
+        operation_type: str,
+        operation_data: Dict[str, Any],
+        grid_id: Optional[str] = None,
+    ) -> int:
+        """
+        Log a pending operation BEFORE executing it.
+
+        This implements write-ahead logging for crash recovery.
+        Log the operation first, execute it, then mark as complete.
+
+        Args:
+            operation_type: Type of operation (SUBMIT_ORDER, CANCEL_ORDER, etc.)
+            operation_data: Operation details as dictionary
+            grid_id: Optional grid order ID for reference
+
+        Returns:
+            Operation ID for later completion
+        """
+        now = datetime.utcnow().isoformat()
+        data_json = json.dumps(operation_data)
+
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO pending_operations
+                (operation_type, operation_data, grid_id, created_at, status)
+                VALUES (?, ?, ?, ?, 'pending')
+                """,
+                (operation_type, data_json, grid_id, now),
+            )
+            conn.commit()
+            operation_id = cursor.lastrowid
+
+        logger.debug(f"Logged pending operation {operation_id}: {operation_type}")
+        return operation_id
+
+    def complete_operation(
+        self,
+        operation_id: int,
+        success: bool = True,
+    ) -> None:
+        """
+        Mark an operation as completed AFTER successful execution.
+
+        Args:
+            operation_id: ID from log_pending_operation
+            success: Whether operation succeeded
+        """
+        now = datetime.utcnow().isoformat()
+        status = "completed" if success else "failed"
+
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                UPDATE pending_operations
+                SET status = ?, completed_at = ?
+                WHERE id = ?
+                """,
+                (status, now, operation_id),
+            )
+            conn.commit()
+
+        logger.debug(f"Completed operation {operation_id}: {status}")
+
+    def get_pending_operations(self) -> List[Dict[str, Any]]:
+        """
+        Get all incomplete operations for recovery.
+
+        Returns:
+            List of pending operation dictionaries
+        """
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT id, operation_type, operation_data, grid_id, created_at
+                FROM pending_operations
+                WHERE status = 'pending'
+                ORDER BY created_at ASC
+                """
+            )
+            rows = cursor.fetchall()
+
+        operations = []
+        for row in rows:
+            op = dict(row)
+            # Parse JSON data
+            try:
+                op["operation_data"] = json.loads(op["operation_data"])
+            except json.JSONDecodeError:
+                op["operation_data"] = {}
+            operations.append(op)
+
+        if operations:
+            logger.info(f"Found {len(operations)} pending operations for recovery")
+
+        return operations
+
+    def cleanup_completed_operations(self, hours: int = 24) -> int:
+        """
+        Clean up old completed operations.
+
+        Args:
+            hours: Delete completed operations older than this many hours
+
+        Returns:
+            Number of operations deleted
+        """
+        from datetime import timedelta
+        cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
+
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """
+                DELETE FROM pending_operations
+                WHERE status IN ('completed', 'failed')
+                AND completed_at < ?
+                """,
+                (cutoff,),
+            )
+            deleted = cursor.rowcount
+            conn.commit()
+
+        if deleted:
+            logger.debug(f"Cleaned up {deleted} completed operations")
+
         return deleted

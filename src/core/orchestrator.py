@@ -70,6 +70,11 @@ class OrchestratorConfig:
     rebalance_check_interval: float = 60.0  # 1 min
     shutdown_timeout: float = 10.0  # 10 sec
 
+    # Recovery settings
+    max_state_age_seconds: int = 86400  # 24 hours (default)
+    skip_state_restore: bool = False  # Skip state restoration if True
+    always_reconcile: bool = True  # Always reconcile with exchange on startup
+
 
 class Orchestrator:
     """
@@ -300,14 +305,25 @@ class Orchestrator:
 
     async def _restore_state(self) -> None:
         """Restore state from persistence if available."""
+        # Check if state restoration should be skipped
+        if self._orch_config.skip_state_restore:
+            logger.info("State restoration skipped (--no-resume flag)")
+            return
+
+        # Check for pending operations (WAL recovery)
+        await self._recover_pending_operations()
+
         if not self._state_manager.has_state():
             logger.info("No saved state to restore")
             return
 
+        # Use configurable state age limit
         state_age = self._state_manager.get_state_age_seconds()
-        if state_age and state_age > 3600:  # 1 hour
+        max_age = self._orch_config.max_state_age_seconds
+        if state_age and state_age > max_age:
             logger.warning(
-                f"Saved state is {state_age/3600:.1f} hours old, starting fresh"
+                f"Saved state is {state_age/3600:.1f} hours old "
+                f"(max: {max_age/3600:.1f}h), starting fresh"
             )
             return
 
@@ -342,6 +358,44 @@ class Orchestrator:
 
         except Exception as e:
             logger.warning(f"Failed to restore state: {e}, starting fresh")
+
+    async def _recover_pending_operations(self) -> None:
+        """Recover incomplete operations from Write-Ahead Log."""
+        pending_ops = self._state_manager.get_pending_operations()
+        if not pending_ops:
+            return
+
+        logger.warning(f"Found {len(pending_ops)} pending operations from previous run")
+
+        for op in pending_ops:
+            op_id = op.get("id")
+            op_type = op.get("operation_type")
+            op_data = op.get("operation_data", {})
+            grid_id = op.get("grid_id")
+
+            logger.info(f"Recovering operation {op_id}: {op_type} for {grid_id}")
+
+            try:
+                if op_type == "SUBMIT_ORDER":
+                    # Check if order exists on exchange
+                    # For now, mark as failed - reconciliation will handle actual state
+                    self._state_manager.complete_operation(op_id, success=False)
+                    logger.info(f"Marked pending SUBMIT_ORDER {op_id} as failed (will reconcile)")
+
+                elif op_type == "CANCEL_ORDER":
+                    # Check if order still exists on exchange
+                    # For now, mark as completed - order likely canceled or gone
+                    self._state_manager.complete_operation(op_id, success=True)
+                    logger.info(f"Marked pending CANCEL_ORDER {op_id} as completed")
+
+                else:
+                    # Unknown operation type, mark as failed
+                    self._state_manager.complete_operation(op_id, success=False)
+                    logger.warning(f"Unknown operation type {op_type}, marked as failed")
+
+            except Exception as e:
+                logger.error(f"Error recovering operation {op_id}: {e}")
+                self._state_manager.complete_operation(op_id, success=False)
 
     async def start(self) -> None:
         """
@@ -404,19 +458,31 @@ class Orchestrator:
         self._state = OrchestratorState.RUNNING
         logger.info("Orchestrator started")
 
-    async def stop(self, cancel_orders: bool = True) -> None:
+    async def stop(self, cancel_orders: bool = True, emergency: bool = False) -> None:
         """
         Gracefully stop the orchestrator.
 
         Args:
             cancel_orders: Whether to cancel all open orders
+            emergency: If True, skip order cancellation (for second signal)
         """
         if self._state in (OrchestratorState.STOPPED, OrchestratorState.SHUTTING_DOWN):
             return
 
-        logger.info("Stopping orchestrator...")
+        if emergency:
+            logger.warning("Emergency shutdown - saving state only")
+        else:
+            logger.info("Stopping orchestrator...")
+
         self._state = OrchestratorState.SHUTTING_DOWN
         self._shutdown_event.set()
+
+        # Save state FIRST before any cleanup (critical for crash recovery)
+        try:
+            await self._save_state()
+            logger.info("State saved before shutdown")
+        except Exception as e:
+            logger.error(f"Failed to save state during shutdown: {e}")
 
         # Cancel all tasks
         for task in self._tasks:
@@ -424,28 +490,47 @@ class Orchestrator:
 
         # Wait for tasks to complete
         if self._tasks:
-            await asyncio.wait(
+            done, pending = await asyncio.wait(
                 self._tasks,
                 timeout=self._orch_config.shutdown_timeout,
             )
+            if pending:
+                logger.warning(f"{len(pending)} tasks did not complete within timeout")
 
-        # Cancel orders if requested
-        if cancel_orders and self._grid_executor:
+        # Cancel orders if requested and not emergency
+        if cancel_orders and not emergency and self._grid_executor:
             logger.info("Canceling all orders...")
-            result = self._grid_executor.cancel_all_orders()
-            logger.info(f"Canceled orders: {result}")
+            # Retry logic for order cancellation
+            for attempt in range(3):
+                try:
+                    result = self._grid_executor.cancel_all_orders()
+                    logger.info(f"Canceled orders: {result}")
+                    break
+                except Exception as e:
+                    logger.error(f"Cancel attempt {attempt + 1}/3 failed: {e}")
+                    if attempt < 2:
+                        await asyncio.sleep(1)
 
-        # Save final state
-        await self._save_state()
+        # Save final state after order cancellation
+        try:
+            await self._save_state()
+        except Exception as e:
+            logger.error(f"Failed to save final state: {e}")
 
         # End session
         if self._session_id and self._state_manager:
-            stats = self.get_stats()
-            self._state_manager.end_session(self._session_id, stats)
+            try:
+                stats = self.get_stats()
+                self._state_manager.end_session(self._session_id, stats)
+            except Exception as e:
+                logger.error(f"Failed to end session: {e}")
 
         # Disconnect WebSocket
         if self._websocket:
-            await self._websocket.disconnect()
+            try:
+                await self._websocket.disconnect()
+            except Exception as e:
+                logger.error(f"Failed to disconnect WebSocket: {e}")
 
         self._state = OrchestratorState.STOPPED
         logger.info("Orchestrator stopped")

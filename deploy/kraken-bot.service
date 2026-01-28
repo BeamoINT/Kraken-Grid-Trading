@@ -1,0 +1,47 @@
+[Unit]
+Description=Kraken Adaptive Grid Trading Bot
+Documentation=https://github.com/yourusername/kraken-grid-trading
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=beamo_beamosupport_com
+Group=beamo_beamosupport_com
+WorkingDirectory=/home/beamo_beamosupport_com/kraken-grid-trading
+
+# Environment setup
+Environment="PATH=/home/beamo_beamosupport_com/kraken-grid-trading/venv/bin:/usr/local/bin:/usr/bin:/bin"
+EnvironmentFile=/home/beamo_beamosupport_com/kraken-grid-trading/.env
+
+# Main command - runs in paper trading mode by default
+# Remove --paper for live trading
+ExecStart=/home/beamo_beamosupport_com/kraken-grid-trading/venv/bin/python -m src.main config/config.yaml --paper
+
+# Graceful shutdown - send SIGTERM and wait
+ExecStop=/bin/kill -SIGTERM $MAINPID
+TimeoutStopSec=30
+
+# Restart policy
+# Restart on failure, but not if manually stopped
+Restart=on-failure
+RestartSec=30
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+# Logging
+# Logs go to journalctl: journalctl -u kraken-bot -f
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kraken-bot
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/home/beamo_beamosupport_com/kraken-grid-trading/data
+ReadWritePaths=/home/beamo_beamosupport_com/kraken-grid-trading/logs
+
+[Install]
+WantedBy=multi-user.target

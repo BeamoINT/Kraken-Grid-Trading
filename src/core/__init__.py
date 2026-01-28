@@ -49,6 +49,15 @@ from .orchestrator import (
     OrchestratorConfig,
     OrchestratorState,
 )
+from .process_lock import (
+    ProcessLock,
+    ProcessLockError,
+    LockInfo,
+)
+from .order_reconciler import (
+    OrderReconciler,
+    ReconciliationResult,
+)
 
 __all__ = [
     # Portfolio
@@ -84,4 +93,11 @@ __all__ = [
     "Orchestrator",
     "OrchestratorConfig",
     "OrchestratorState",
+    # Process Lock
+    "ProcessLock",
+    "ProcessLockError",
+    "LockInfo",
+    # Order Reconciler
+    "OrderReconciler",
+    "ReconciliationResult",
 ]
