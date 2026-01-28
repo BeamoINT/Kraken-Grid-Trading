@@ -128,7 +128,7 @@ class TradeIngestionPipeline:
 
             records.append({
                 "timestamp_ns": timestamp_ns,
-                "timestamp": pd.Timestamp(timestamp, unit="s", tz="UTC"),
+                "timestamp": pd.Timestamp(timestamp, unit="s", tz="UTC").as_unit("us"),
                 "price": price,
                 "volume": volume,
                 "side": side,
