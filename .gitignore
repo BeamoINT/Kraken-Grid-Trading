@@ -81,4 +81,3 @@ htmlcov/
 !data/features/.gitkeep
 !data/models/.gitkeep
 !logs/.gitkeep
-GCP_VM_REFERENCE.md
