@@ -26,10 +26,43 @@ python scripts/compute_features.py --pairs XBTUSD --timeframes 1m 5m 15m 1h 4h
 python scripts/train_model.py
 
 # Run bot (paper trading)
-python -m src.main config/config.yaml
+python -m src.main config/config.yaml --paper
 
-# Run tests
+# Run bot (dry-run validation only)
+python -m src.main config/config.yaml --dry-run
+```
+
+## Testing
+
+```bash
+# Run all tests
 pytest tests/
+
+# Run single test file
+pytest tests/test_grid_calculator.py
+
+# Run single test function
+pytest tests/test_grid_calculator.py::test_function_name -v
+
+# Run with coverage
+pytest tests/ --cov=src --cov-report=term-missing
+
+# Run async tests (asyncio_mode is auto-configured in pyproject.toml)
+pytest tests/test_orchestrator.py -v
+```
+
+## Code Quality
+
+```bash
+# Format code
+black src/ tests/ scripts/
+isort src/ tests/ scripts/
+
+# Lint
+ruff check src/ tests/ scripts/
+
+# Type check
+mypy src/
 ```
 
 ## Architecture
@@ -70,9 +103,11 @@ pytest tests/
 | `src/features/` | Technical indicator computation (ATR, ADX, BBands, RSI, MACD, etc.) |
 | `src/regime/` | Market regime labeling and classification |
 | `src/models/` | XGBoost regime classifier with walk-forward validation |
-| `src/grid/` | Adaptive grid calculation and order management |
-| `src/core/` | Orchestrator and risk management |
+| `src/grid/` | Adaptive grid calculation, order management, rebalancing |
+| `src/core/` | Orchestrator, risk manager, state manager, health monitoring, alerts |
 | `src/persistence/` | SQLite database for state and order tracking |
+| `src/operations/` | Grid execution and operational logic |
+| `src/utils/` | Configuration loading, shared utilities |
 | `config/` | Configuration dataclasses and YAML loading |
 
 ## Feature Engineering
@@ -222,6 +257,18 @@ def api_call():
 breaker = CircuitBreaker(failure_threshold=5, reset_timeout=60)
 ```
 
+## Core Runtime Components
+
+| Component | Purpose |
+|-----------|---------|
+| `Orchestrator` | Main loop coordinator, handles startup/shutdown, signal handling |
+| `RiskManager` | Enforces risk rules, triggers halt/pause actions |
+| `StateManager` | Persists bot state to SQLite, enables crash recovery |
+| `Portfolio` | Tracks equity, positions, high-water mark drawdown |
+| `HealthChecker` | Monitors system health (API, WebSocket, memory) |
+| `ProcessLock` | PID file locking to prevent multiple instances |
+| `OrderReconciler` | Syncs local state with Kraken's order state |
+
 ## Risk Rules
 
 - Max 2% capital risk per grid level
@@ -246,6 +293,101 @@ Live WebSocket → Real-time Features → Regime Prediction → Grid Adjustment
 - **Trading parameters**: Set in `config/config.yaml`
 - **Environment overrides**: `KRAKEN_*` env vars override YAML values
 
+## CLI Arguments
+
+```bash
+python -m src.main config/config.yaml [OPTIONS]
+
+Options:
+  --paper           Force paper trading mode (orders validated but not executed)
+  --fresh           Clear saved state and start fresh
+  --dry-run         Validate configuration and exit without trading
+  --log-level LEVEL Set logging level (DEBUG, INFO, WARNING, ERROR)
+  --log-file PATH   Log file path
+  --force-start     Override PID lock (use if previous instance crashed)
+  --no-resume       Skip state restoration (but keep history)
+  --max-state-age N Maximum state age in seconds for resume (default: 86400)
+```
+
 ## Paper Trading
 
-Set `PAPER_TRADING=true` in `.env` or `validate: true` in AddOrder requests. Orders are validated but not executed.
+Set `PAPER_TRADING=true` in `.env` or use `--paper` flag. Orders are validated but not executed.
+
+## GCP VM Deployment
+
+The bot runs on a Google Cloud VM as a systemd service.
+
+### VM Specs
+
+| Property | Value |
+|----------|-------|
+| **VM Name** | krakengridbot |
+| **External IP** | 35.227.103.77 |
+| **OS** | Ubuntu 24.04.3 LTS |
+| **CPU** | 2 cores (Intel Xeon @ 2.20GHz) |
+| **RAM** | 3.8 GB |
+| **Disk** | 43 GB |
+| **Python** | 3.12.3 |
+
+### SSH Access
+
+```bash
+# SSH into VM (using configured alias)
+ssh kraken-bot
+
+# Direct SSH (if alias not configured)
+ssh -i ~/.ssh/kraken_gcp beamo_beamosupport_com@35.227.103.77
+
+# Copy file to VM
+scp local_file.txt kraken-bot:~/kraken-grid-trading/
+
+# Copy file from VM
+scp kraken-bot:~/kraken-grid-trading/remote_file.txt ./
+```
+
+SSH config (~/.ssh/config):
+```
+Host kraken-bot gcp-kraken
+    HostName 35.227.103.77
+    User beamo_beamosupport_com
+    IdentityFile ~/.ssh/kraken_gcp
+    IdentitiesOnly yes
+    ServerAliveInterval 60
+```
+
+### Service Management
+
+```bash
+# Check bot status
+ssh kraken-bot "sudo systemctl status kraken-bot"
+
+# Start/stop/restart
+ssh kraken-bot "sudo systemctl start kraken-bot"
+ssh kraken-bot "sudo systemctl stop kraken-bot"
+ssh kraken-bot "sudo systemctl restart kraken-bot"
+
+# View logs (live)
+ssh kraken-bot "journalctl -u kraken-bot -f"
+
+# View last 100 log lines
+ssh kraken-bot "journalctl -u kraken-bot -n 100"
+
+# Quick deploy (pull and restart)
+ssh kraken-bot "cd ~/kraken-grid-trading && git pull origin main && sudo systemctl restart kraken-bot"
+
+# Full deploy (with dependencies)
+ssh kraken-bot "cd ~/kraken-grid-trading && git pull && source venv/bin/activate && pip install -r requirements.txt && sudo systemctl restart kraken-bot"
+```
+
+### VM File Paths
+
+| Path | Purpose |
+|------|---------|
+| `~/kraken-grid-trading` | Bot installation directory |
+| `~/kraken-grid-trading/venv` | Python virtual environment |
+| `~/kraken-grid-trading/.env` | API credentials |
+| `~/kraken-grid-trading/config/config.yaml` | Bot configuration |
+| `~/kraken-grid-trading/data/` | Database and state files |
+| `~/kraken-grid-trading/logs/` | Log files |
+
+See `GCP_VM_REFERENCE.md` for complete VM documentation.
