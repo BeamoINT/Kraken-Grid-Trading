@@ -175,6 +175,7 @@ class RegimeClassifier:
                 data_split.y_train,
                 sample_weight=sample_weight,
                 eval_set=eval_set,
+                early_stopping_rounds=self.params.early_stopping_rounds,
                 verbose=verbose,
             )
             best_iteration = self.model.best_iteration
