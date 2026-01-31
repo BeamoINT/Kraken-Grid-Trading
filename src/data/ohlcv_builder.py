@@ -123,7 +123,12 @@ class OHLCVBuilder:
         for date_dir in date_dirs:
             file_path = date_dir / "trades.parquet"
             if file_path.exists():
-                dfs.append(pq.read_table(file_path).to_pandas())
+                df = pq.read_table(file_path).to_pandas()
+                # Drop 'date' column if present - it's redundant with partition
+                # and can have inconsistent types across files
+                if "date" in df.columns:
+                    df = df.drop(columns=["date"])
+                dfs.append(df)
 
         if not dfs:
             return pd.DataFrame()
