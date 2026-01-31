@@ -84,6 +84,7 @@ class WebSocketConfig:
     max_reconnect_delay: float = 300.0  # Max backoff (5 min)
     reconnect_multiplier: float = 2.0
     ohlc_interval: int = 5  # Subscribe to 5-minute candles
+    message_queue_size: int = 1000  # Max messages in async queue
 
 
 # ===========================================
