@@ -312,8 +312,13 @@ class RegimeLabeler:
         else:
             regime = self._label_indicator_based(df)
 
-        result["regime"] = regime.astype(int)
-        result["regime_name"] = regime.map(lambda x: MarketRegime(x).name if pd.notna(x) else None)
+        # Handle NaN values from outcome-based labeling (lookahead window)
+        if regime.isna().any():
+            # Use nullable integer type to preserve NaN
+            result["regime"] = regime.astype("Int64")
+        else:
+            result["regime"] = regime.astype(int)
+        result["regime_name"] = regime.map(lambda x: MarketRegime(int(x)).name if pd.notna(x) else None)
 
         return result
 
