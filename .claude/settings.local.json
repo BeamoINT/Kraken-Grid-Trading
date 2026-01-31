@@ -16,7 +16,11 @@
       "Bash(ssh:*)",
       "Bash(ls:*)",
       "Bash(chmod:*)",
-      "Bash(ssh-keygen:*)"
+      "Bash(ssh-keygen:*)",
+      "Bash(git log:*)",
+      "Bash(source:*)",
+      "Bash(python -m src.main:*)",
+      "Bash(git restore:*)"
     ]
   }
 }

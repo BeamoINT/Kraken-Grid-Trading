@@ -312,7 +312,7 @@ class Orchestrator:
             if result:
                 self._classifier, metadata, self._scaler = result
                 logger.info(
-                    f"Loaded production model: {metadata.get('model_id', 'unknown')}"
+                    f"Loaded production model: {metadata.model_id}"
                 )
             else:
                 logger.warning(
@@ -875,12 +875,17 @@ class Orchestrator:
         if not self._order_manager:
             return
 
-        # Sync orders
-        state_changes = self._order_manager.sync_orders()
-        if state_changes:
-            logger.debug(f"Order state changes: {state_changes}")
+        # Sync orders (paper trading simulates order fills locally)
+        if not self._config.paper_trading:
+            state_changes = self._order_manager.sync_orders()
+            if state_changes:
+                logger.debug(f"Order state changes: {state_changes}")
 
-        # Sync balance
+        # Sync balance - skip in paper trading mode to use simulated balance
+        if self._config.paper_trading:
+            logger.debug("Paper trading: using simulated balance (skipping API sync)")
+            return
+
         if self._rest_client and self._portfolio:
             try:
                 balance = self._rest_client.get_balance()
