@@ -77,7 +77,9 @@ class KrakenConfig:
 class WebSocketConfig:
     """WebSocket connection configuration."""
 
-    url: str = "wss://ws.kraken.com/v2"
+    url: str = "wss://ws.kraken.com/v2"  # Legacy - prefer public_url/private_url
+    public_url: str = "wss://ws.kraken.com/v2"
+    private_url: str = "wss://ws-auth.kraken.com/v2"
     ping_interval: float = 30.0  # seconds
     ping_timeout: float = 10.0
     reconnect_delay: float = 5.0  # Initial delay
