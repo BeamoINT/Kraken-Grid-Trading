@@ -761,7 +761,10 @@ class Orchestrator:
 
             # Compute features
             from src.features import FeaturePipeline
-            pipeline = FeaturePipeline()
+            pipeline = FeaturePipeline(
+                ohlcv_path=self._config.storage.ohlcv_path,
+                features_path=self._config.storage.features_path,
+            )
             features_df = pipeline.compute_all_features(df)
 
             if features_df.empty:
