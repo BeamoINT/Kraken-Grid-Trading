@@ -362,6 +362,97 @@ class OHLCVBuilder:
             "incremental": incremental,
         }
 
+    def build_ohlcv_chunked(
+        self,
+        pair: str,
+        chunk_months: int = 3,
+    ) -> Dict[str, Any]:
+        """
+        Build OHLCV data in memory-efficient chunks.
+
+        Processes trades in monthly chunks to avoid loading all data at once.
+        Suitable for large datasets (50M+ trades) on memory-constrained systems.
+
+        Args:
+            pair: Trading pair (e.g., "XBTUSD")
+            chunk_months: Number of months per chunk (default: 3)
+
+        Returns:
+            Dict with build statistics
+        """
+        import gc
+        from datetime import datetime
+        from dateutil.relativedelta import relativedelta
+
+        logger.info(f"Building OHLCV for {pair} in {chunk_months}-month chunks")
+
+        pair_path = self.trades_path / pair
+        if not pair_path.exists():
+            raise ValueError(f"No trades found for {pair}")
+
+        # Get all date partitions
+        date_dirs = sorted(pair_path.glob("date=*"))
+        if not date_dirs:
+            return {"pair": pair, "candles": {}, "status": "no_data"}
+
+        # Extract date range
+        dates = [d.name.split("=")[1] for d in date_dirs]
+        start_date = datetime.strptime(min(dates), "%Y-%m-%d")
+        end_date = datetime.strptime(max(dates), "%Y-%m-%d")
+
+        logger.info(f"Date range: {start_date.date()} to {end_date.date()}")
+
+        # Process in chunks
+        total_candles = {tf: 0 for tf in self.timeframes}
+        current_start = start_date
+        chunk_num = 0
+
+        while current_start <= end_date:
+            chunk_num += 1
+            current_end = current_start + relativedelta(months=chunk_months) - relativedelta(days=1)
+            if current_end > end_date:
+                current_end = end_date
+
+            start_str = current_start.strftime("%Y-%m-%d")
+            end_str = current_end.strftime("%Y-%m-%d")
+
+            logger.info(f"Chunk {chunk_num}: {start_str} to {end_str}")
+
+            # Load trades for this chunk
+            trades = self._load_trades(pair, start_str, end_str)
+
+            if not trades.empty:
+                # Build 1-minute candles
+                ohlcv_1m = self._trades_to_1m_ohlcv(trades)
+                logger.info(f"  Built {len(ohlcv_1m):,} 1-minute candles")
+
+                # Build all timeframes and append
+                for tf in self.timeframes:
+                    if tf == "1m":
+                        ohlcv = ohlcv_1m
+                    else:
+                        ohlcv = self._resample_ohlcv(ohlcv_1m, tf)
+
+                    self._write_ohlcv(ohlcv, pair, tf, append=True)
+                    total_candles[tf] += len(ohlcv)
+
+                # Free memory
+                del trades, ohlcv_1m
+                gc.collect()
+
+            current_start = current_end + relativedelta(days=1)
+
+        logger.info(f"OHLCV build complete for {pair}:")
+        for tf, count in total_candles.items():
+            logger.info(f"  {tf}: {count:,} candles")
+
+        return {
+            "pair": pair,
+            "candles": total_candles,
+            "status": "success",
+            "chunks_processed": chunk_num,
+        }
+
     def load_ohlcv(
         self,
         pair: str,

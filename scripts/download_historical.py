@@ -166,10 +166,17 @@ def build_ohlcv(args):
         logger.info(f"Building OHLCV for {pair}...")
 
         try:
-            stats = builder.build_ohlcv(
-                pair=pair,
-                incremental=args.incremental,
-            )
+            # Use chunked processing for large datasets (memory-efficient)
+            if args.chunked:
+                stats = builder.build_ohlcv_chunked(
+                    pair=pair,
+                    chunk_months=args.chunk_months,
+                )
+            else:
+                stats = builder.build_ohlcv(
+                    pair=pair,
+                    incremental=args.incremental,
+                )
 
             logger.info(f"OHLCV build complete for {pair}:")
             for tf, count in stats.get("candles", {}).items():
@@ -293,6 +300,20 @@ Examples:
         "--incremental",
         action="store_true",
         help="Incremental OHLCV build (only process new data)",
+    )
+
+    parser.add_argument(
+        "--chunked",
+        action="store_true",
+        help="Use memory-efficient chunked processing for OHLCV build (recommended for large datasets)",
+    )
+
+    parser.add_argument(
+        "--chunk-months",
+        type=int,
+        default=3,
+        dest="chunk_months",
+        help="Months per chunk when using --chunked (default: 3)",
     )
 
     parser.add_argument(
