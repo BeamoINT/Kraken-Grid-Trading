@@ -257,21 +257,27 @@ class RegimeLabeler:
         future_vol = returns.rolling(window=self.outcome_lookahead).std().shift(-self.outcome_lookahead)
         vol_threshold = future_vol.quantile(self.high_vol_pct / 100.0)
 
-        # Initialize as RANGING
-        regime = pd.Series(MarketRegime.RANGING, index=df.index)
+        # Initialize as NaN (will be set to RANGING where future data exists)
+        regime = pd.Series(np.nan, index=df.index)
+
+        # Only label rows where we have future data
+        valid_mask = future_return.notna()
+
+        # Initialize valid rows as RANGING
+        regime[valid_mask] = MarketRegime.RANGING
 
         # HIGH_VOLATILITY: Future volatility is high
-        regime[future_vol > vol_threshold] = MarketRegime.HIGH_VOLATILITY
+        regime[(future_vol > vol_threshold) & valid_mask] = MarketRegime.HIGH_VOLATILITY
 
         # TRENDING_UP: Price goes up significantly
-        regime[future_return > self.outcome_trend_threshold] = MarketRegime.TRENDING_UP
+        regime[(future_return > self.outcome_trend_threshold) & valid_mask] = MarketRegime.TRENDING_UP
 
         # TRENDING_DOWN: Price goes down significantly
-        regime[future_return < -self.outcome_trend_threshold] = MarketRegime.TRENDING_DOWN
+        regime[(future_return < -self.outcome_trend_threshold) & valid_mask] = MarketRegime.TRENDING_DOWN
 
         # BREAKOUT: Very large move in either direction (2x threshold)
         breakout_threshold = self.outcome_trend_threshold * 2
-        regime[future_return.abs() > breakout_threshold] = MarketRegime.BREAKOUT
+        regime[(future_return.abs() > breakout_threshold) & valid_mask] = MarketRegime.BREAKOUT
 
         return regime
 

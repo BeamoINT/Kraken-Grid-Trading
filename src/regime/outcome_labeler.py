@@ -94,26 +94,32 @@ class OutcomeBasedLabeler:
         # Calculate volatility threshold from data
         vol_threshold = future_vol.quantile(self.vol_percentile / 100.0)
 
-        # Initialize all as RANGING (default)
-        labels = pd.Series(MarketRegime.RANGING, index=df.index)
+        # Initialize all as NaN (will be set to RANGING where future data exists)
+        labels = pd.Series(np.nan, index=df.index)
+
+        # Only label rows where we have future data
+        valid_mask = future_return.notna()
+
+        # Initialize valid rows as RANGING (default)
+        labels[valid_mask] = MarketRegime.RANGING
 
         # Label based on future outcomes (order matters - later overrides earlier)
 
         # HIGH_VOLATILITY: Future volatility is high
-        labels[future_vol > vol_threshold] = MarketRegime.HIGH_VOLATILITY
+        labels[(future_vol > vol_threshold) & valid_mask] = MarketRegime.HIGH_VOLATILITY
 
         # TRENDING_UP: Price goes up significantly
-        labels[future_return > self.trend_threshold] = MarketRegime.TRENDING_UP
+        labels[(future_return > self.trend_threshold) & valid_mask] = MarketRegime.TRENDING_UP
 
         # TRENDING_DOWN: Price goes down significantly
-        labels[future_return < -self.trend_threshold] = MarketRegime.TRENDING_DOWN
+        labels[(future_return < -self.trend_threshold) & valid_mask] = MarketRegime.TRENDING_DOWN
 
         # BREAKOUT: Very large move in either direction
         breakout_threshold = self.trend_threshold * self.breakout_multiplier
-        labels[future_return.abs() > breakout_threshold] = MarketRegime.BREAKOUT
+        labels[(future_return.abs() > breakout_threshold) & valid_mask] = MarketRegime.BREAKOUT
 
-        # Convert to int for storage
-        return labels.astype(int)
+        # Return as nullable integer (keeps NaN for rows without future data)
+        return labels
 
     def label_with_confidence(
         self,
