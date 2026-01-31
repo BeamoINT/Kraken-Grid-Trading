@@ -119,11 +119,14 @@ class OHLCVBuilder:
             return pd.DataFrame()
 
         # Read all partitions
+        # Use ParquetFile to read single files without dataset/schema inference
         dfs = []
         for date_dir in date_dirs:
             file_path = date_dir / "trades.parquet"
             if file_path.exists():
-                df = pq.read_table(file_path).to_pandas()
+                # Read single file directly to avoid schema merge issues
+                pf = pq.ParquetFile(file_path)
+                df = pf.read().to_pandas()
                 # Drop 'date' column if present - it's redundant with partition
                 # and can have inconsistent types across files
                 if "date" in df.columns:
