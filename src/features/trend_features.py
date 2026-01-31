@@ -221,11 +221,11 @@ def golden_death_cross(
 
     # Current state
     short_above_long = ma_short > ma_long
-    prev_short_above_long = short_above_long.shift(1)
+    prev_short_above_long = short_above_long.shift(1).fillna(False)
 
-    # Cross events
-    golden_cross = (~prev_short_above_long) & short_above_long
-    death_cross = prev_short_above_long & (~short_above_long)
+    # Cross events (fillna to handle NaN values at start)
+    golden_cross = (~prev_short_above_long) & short_above_long.fillna(False)
+    death_cross = prev_short_above_long & (~short_above_long.fillna(False))
 
     # Days since last cross
     def days_since_cross(crosses: pd.Series) -> pd.Series:
@@ -278,15 +278,15 @@ def macd_trend(
     # Histogram direction
     hist_rising = (histogram > histogram.shift(1)).astype(int)
 
-    # Signal line crossover
-    prev_above = macd_line.shift(1) > signal_line.shift(1)
-    curr_above = macd_line > signal_line
+    # Signal line crossover (fillna to handle NaN values)
+    prev_above = (macd_line.shift(1) > signal_line.shift(1)).fillna(False)
+    curr_above = (macd_line > signal_line).fillna(False)
     bullish_cross = (~prev_above) & curr_above
     bearish_cross = prev_above & (~curr_above)
 
-    # Zero line crossover
-    prev_above_zero = macd_line.shift(1) > 0
-    curr_above_zero = macd_line > 0
+    # Zero line crossover (fillna to handle NaN values)
+    prev_above_zero = (macd_line.shift(1) > 0).fillna(False)
+    curr_above_zero = (macd_line > 0).fillna(False)
     zero_bullish_cross = (~prev_above_zero) & curr_above_zero
     zero_bearish_cross = prev_above_zero & (~curr_above_zero)
 
@@ -385,9 +385,9 @@ def cci_trend(
     # CCI direction
     cci_rising = (cci_values > cci_values.shift(1)).astype(int)
 
-    # Zero line crosses
-    prev_above_zero = cci_values.shift(1) > 0
-    curr_above_zero = cci_values > 0
+    # Zero line crosses (fillna to handle NaN values)
+    prev_above_zero = (cci_values.shift(1) > 0).fillna(False)
+    curr_above_zero = (cci_values > 0).fillna(False)
     bullish_cross = (~prev_above_zero) & curr_above_zero
     bearish_cross = prev_above_zero & (~curr_above_zero)
 
@@ -452,11 +452,12 @@ def trend_duration(
         DataFrame with duration metrics
     """
     ma = sma(close, period)
-    above_ma = close > ma
+    above_ma = (close > ma).fillna(False)
 
     # Count consecutive periods above/below MA
     def count_consecutive(series: pd.Series) -> pd.Series:
         """Count consecutive True values."""
+        series = series.fillna(False)  # Handle NaN values
         cumsum = series.cumsum()
         reset_points = cumsum.where(~series).ffill().fillna(0)
         return cumsum - reset_points
