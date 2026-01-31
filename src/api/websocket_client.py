@@ -338,12 +338,15 @@ class KrakenWebSocketClient:
 
     async def _receive_loop(self) -> None:
         """Background task to receive and process messages."""
+        logger.debug("Receive loop started")
         while not self._shutdown:
             try:
                 if not self._ws:
+                    logger.debug("No WebSocket connection in receive loop")
                     break
 
                 message = await self._ws.recv()
+                logger.debug(f"Received raw message: {str(message)[:200]}")
 
                 if isinstance(message, bytes):
                     message = message.decode("utf-8")
@@ -403,6 +406,7 @@ class KrakenWebSocketClient:
         # Queue data messages
         try:
             self._message_queue.put_nowait(data)
+            logger.debug(f"Queued message: channel={data.get('channel')}, queue_size={self._message_queue.qsize()}")
         except asyncio.QueueFull:
             logger.warning("Message queue full, dropping message")
 

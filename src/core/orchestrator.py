@@ -613,9 +613,13 @@ class Orchestrator:
     async def _websocket_task(self) -> None:
         """Handle WebSocket messages."""
         logger.info("WebSocket task started")
+        msg_count = 0
 
         try:
             async for message in self._websocket:
+                msg_count += 1
+                logger.debug(f"Received WS message #{msg_count}: channel={message.get('channel')}")
+
                 if self._shutdown_event.is_set():
                     break
 
@@ -652,6 +656,7 @@ class Orchestrator:
 
             if price_str:
                 self._current_price = Decimal(str(price_str))
+                logger.info(f"Price update: ${self._current_price}")
 
                 # Update health checker
                 if self._health_checker:
@@ -662,7 +667,7 @@ class Orchestrator:
                     self._order_manager.update_position_mark(self._current_price)
 
         except Exception as e:
-            logger.debug(f"Error handling ticker: {e}")
+            logger.warning(f"Error handling ticker: {e}")
 
     async def _handle_ohlc(self, message: Dict[str, Any]) -> None:
         """Handle OHLC candle message."""

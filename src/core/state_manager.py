@@ -21,6 +21,17 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
+class DecimalEncoder(json.JSONEncoder):
+    """JSON encoder that handles Decimal objects."""
+
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return str(obj)
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        return super().default(obj)
+
+
 @dataclass
 class BotState:
     """Complete bot state for persistence."""
@@ -220,7 +231,7 @@ class StateManager:
         Args:
             state: BotState to persist
         """
-        state_json = json.dumps(state.to_dict())
+        state_json = json.dumps(state.to_dict(), cls=DecimalEncoder)
 
         with self._get_connection() as conn:
             conn.execute(
@@ -812,7 +823,7 @@ class StateManager:
             Operation ID for later completion
         """
         now = datetime.utcnow().isoformat()
-        data_json = json.dumps(operation_data)
+        data_json = json.dumps(operation_data, cls=DecimalEncoder)
 
         with self._get_connection() as conn:
             cursor = conn.execute(
