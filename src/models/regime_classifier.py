@@ -123,12 +123,15 @@ class RegimeClassifier:
     def _create_model(
         self,
         params: Optional[XGBoostParams] = None,
+        early_stopping_rounds: Optional[int] = None,
     ) -> xgb.XGBClassifier:
         """Create XGBoost classifier instance."""
         p = params or self.params
+        # early_stopping_rounds must be set in constructor for newer XGBoost versions
         return xgb.XGBClassifier(
             objective="multi:softprob",
             num_class=self.num_classes,
+            early_stopping_rounds=early_stopping_rounds,
             **p.to_dict(),
         )
 
@@ -154,8 +157,9 @@ class RegimeClassifier:
         self.feature_names = data_split.feature_names
         self.class_weights = class_weights
 
-        # Create model
-        self.model = self._create_model()
+        # Create model with early stopping if enabled
+        es_rounds = self.params.early_stopping_rounds if early_stopping else None
+        self.model = self._create_model(early_stopping_rounds=es_rounds)
 
         # Prepare sample weights if class weights provided
         sample_weight = None
@@ -166,16 +170,15 @@ class RegimeClassifier:
             ])
 
         # Prepare eval set for early stopping
-        eval_set = [(data_split.X_val, data_split.y_val)]
+        eval_set = [(data_split.X_val, data_split.y_val)] if early_stopping else None
 
-        # Train with early stopping
+        # Train model
         if early_stopping and self.params.early_stopping_rounds:
             self.model.fit(
                 data_split.X_train,
                 data_split.y_train,
                 sample_weight=sample_weight,
                 eval_set=eval_set,
-                early_stopping_rounds=self.params.early_stopping_rounds,
                 verbose=verbose,
             )
             best_iteration = self.model.best_iteration
