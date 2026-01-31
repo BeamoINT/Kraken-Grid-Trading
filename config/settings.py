@@ -104,8 +104,10 @@ class TradingConfig:
     # Kraken pair mapping (for WebSocket which uses different names)
     @property
     def ws_symbol(self) -> str:
-        """Get WebSocket symbol (uses BTC not XBT)."""
-        return self.pair.replace("XBT", "BTC")
+        """Get WebSocket symbol in ISO format for WS API v2 (e.g., BTC/USD)."""
+        # Convert XBTUSD -> BTC/USD (WS API v2 uses ISO 4217 format with slash)
+        base = self.base_currency.replace("XBT", "BTC")
+        return f"{base}/{self.quote_currency}"
 
 
 @dataclass

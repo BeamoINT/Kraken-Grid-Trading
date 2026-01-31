@@ -640,7 +640,7 @@ class KrakenWebSocketClient:
     # ASYNC ITERATOR INTERFACE
     # ==========================================
 
-    async def __aiter__(self):
+    def __aiter__(self):
         """Async iterator for messages."""
         return self
 
