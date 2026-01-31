@@ -12,6 +12,7 @@ Provides:
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum, auto
@@ -41,6 +42,7 @@ from .alerts import AlertManager, AlertType, AlertSeverity, LoggingAlertHandler
 from .risk_manager import RiskManager, RiskAction
 from .state_manager import StateManager, BotState
 from .health_check import HealthChecker, HealthLevel
+from src.data.data_sync import DataSyncService, DataSyncConfig
 
 logger = logging.getLogger(__name__)
 
@@ -68,12 +70,17 @@ class OrchestratorConfig:
     health_check_interval: float = 60.0  # 1 min
     state_persist_interval: float = 30.0  # 30 sec
     rebalance_check_interval: float = 60.0  # 1 min
+    data_sync_interval: float = 3600.0  # 1 hour - sync historical data
     shutdown_timeout: float = 10.0  # 10 sec
 
     # Recovery settings
     max_state_age_seconds: int = 86400  # 24 hours (default)
     skip_state_restore: bool = False  # Skip state restoration if True
     always_reconcile: bool = True  # Always reconcile with exchange on startup
+
+    # Data sync settings
+    data_sync_enabled: bool = True  # Enable periodic data sync
+    data_sync_timeframes: List[str] = field(default_factory=lambda: ["1h", "4h"])
 
 
 class Orchestrator:
@@ -127,6 +134,7 @@ class Orchestrator:
         self._grid_executor: Optional[GridExecutor] = None
         self._rebalancer: Optional[Rebalancer] = None
         self._health_checker: Optional[HealthChecker] = None
+        self._data_sync_service: Optional[DataSyncService] = None
 
         # ML components (optional)
         self._classifier = None
@@ -271,7 +279,19 @@ class Orchestrator:
             )
             logger.info("HealthChecker initialized")
 
-            # 14. Restore state if exists
+            # 14. Data Sync Service (optional - keeps historical data updated)
+            if self._orch_config.data_sync_enabled:
+                data_sync_config = DataSyncConfig(
+                    trade_sync_interval=self._orch_config.data_sync_interval,
+                    pairs=[self._config.trading.pair],
+                    timeframes=self._orch_config.data_sync_timeframes,
+                    raw_data_path=Path("data/raw"),
+                    ohlcv_path=Path("data/ohlcv"),
+                )
+                self._data_sync_service = DataSyncService(config=data_sync_config)
+                logger.info("DataSyncService initialized")
+
+            # 15. Restore state if exists
             await self._restore_state()
 
             logger.info("Orchestrator initialization complete")
@@ -454,6 +474,12 @@ class Orchestrator:
             asyncio.create_task(self._regime_predict_task(), name="regime_predict"),
             asyncio.create_task(self._rebalance_check_task(), name="rebalance_check"),
         ]
+
+        # Add data sync task if enabled
+        if self._data_sync_service is not None:
+            self._tasks.append(
+                asyncio.create_task(self._data_sync_task(), name="data_sync")
+            )
 
         self._state = OrchestratorState.RUNNING
         logger.info("Orchestrator started")
@@ -977,6 +1003,64 @@ class Orchestrator:
 
             await self._update_grid(self._current_regime, self._current_confidence)
             self._rebalancer.mark_rebalanced()
+
+    async def _data_sync_task(self) -> None:
+        """
+        Periodic data synchronization task.
+
+        Downloads new trades and updates OHLCV candles at configured intervals.
+        This keeps historical data fresh during live trading for:
+        - Feature computation with up-to-date lookback windows
+        - Regime model retraining (if needed)
+        - Analytics and reporting
+        """
+        if self._data_sync_service is None:
+            return
+
+        logger.info(
+            f"Data sync task started (interval: {self._orch_config.data_sync_interval}s)"
+        )
+
+        try:
+            await self._data_sync_service.start()
+
+            while not self._shutdown_event.is_set():
+                # Wait for sync interval or shutdown
+                try:
+                    await asyncio.wait_for(
+                        self._shutdown_event.wait(),
+                        timeout=self._orch_config.data_sync_interval,
+                    )
+                    # If we get here, shutdown was signaled
+                    break
+                except asyncio.TimeoutError:
+                    pass  # Normal timeout, proceed with sync
+
+                if self._shutdown_event.is_set():
+                    break
+
+                # Skip sync if not running
+                if self._state != OrchestratorState.RUNNING:
+                    continue
+
+                # Perform sync for each configured pair
+                for pair in self._data_sync_service.config.pairs:
+                    if self._shutdown_event.is_set():
+                        break
+
+                    try:
+                        result = await self._data_sync_service.sync_once(pair)
+                        if result.get("errors"):
+                            for error in result["errors"]:
+                                logger.warning(f"Data sync issue: {error}")
+                    except Exception as e:
+                        logger.error(f"Data sync error for {pair}: {e}")
+
+        except asyncio.CancelledError:
+            logger.info("Data sync task cancelled")
+        finally:
+            if self._data_sync_service:
+                await self._data_sync_service.stop()
 
     # === Event Handlers ===
 
