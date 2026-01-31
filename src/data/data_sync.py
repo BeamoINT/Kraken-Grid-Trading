@@ -89,7 +89,7 @@ class DataSyncService:
         )
 
         self._ohlcv_builder = OHLCVBuilder(
-            raw_data_path=config.raw_data_path,
+            trades_path=config.raw_data_path,
             ohlcv_path=config.ohlcv_path,
         )
 
