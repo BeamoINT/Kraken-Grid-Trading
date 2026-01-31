@@ -683,6 +683,12 @@ class KrakenPrivateClient:
 
         if validate:
             logger.info(f"Order validated: {result.get('descr', {}).get('order', '')}")
+            # Generate a fake txid for paper trading to enable order tracking
+            if self._paper_trading:
+                import uuid
+                fake_txid = f"PAPER-{uuid.uuid4().hex[:12].upper()}"
+                result["txid"] = [fake_txid]
+                logger.debug(f"Paper trading: generated fake txid {fake_txid}")
         else:
             txids = result.get("txid", [])
             logger.info(f"Order placed: {txids}, {result.get('descr', {}).get('order', '')}")
