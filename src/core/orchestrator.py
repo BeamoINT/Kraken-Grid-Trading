@@ -655,8 +655,9 @@ class Orchestrator:
             price_str = ticker.get("last", ticker.get("c", [None])[0])
 
             if price_str:
+                old_price = self._current_price
                 self._current_price = Decimal(str(price_str))
-                logger.info(f"Price update: ${self._current_price}")
+                logger.debug(f"Price update: ${self._current_price}")
 
                 # Update health checker
                 if self._health_checker:
@@ -665,6 +666,11 @@ class Orchestrator:
                 # Update position mark price
                 if self._order_manager:
                     self._order_manager.update_position_mark(self._current_price)
+
+                # Deploy grid on first price if not already deployed
+                if old_price is None and self._grid_executor and not self._grid_executor.is_trading:
+                    logger.info("First price received via WebSocket, deploying grid")
+                    await self._deploy_initial_grid()
 
         except Exception as e:
             logger.warning(f"Error handling ticker: {e}")
