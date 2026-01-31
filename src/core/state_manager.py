@@ -21,14 +21,46 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
+def _serialize_for_json(obj: Any) -> Any:
+    """Recursively serialize an object for JSON, handling Decimal, datetime, Enum, dataclass."""
+    if obj is None:
+        return None
+    if isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, Decimal):
+        return str(obj)
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    # Handle Enum types
+    if hasattr(obj, 'value') and hasattr(obj.__class__, '__members__'):
+        return obj.value
+    # Handle dataclass objects
+    if hasattr(obj, '__dataclass_fields__'):
+        return {k: _serialize_for_json(v) for k, v in asdict(obj).items()}
+    # Handle dicts
+    if isinstance(obj, dict):
+        return {k: _serialize_for_json(v) for k, v in obj.items()}
+    # Handle lists/tuples
+    if isinstance(obj, (list, tuple)):
+        return [_serialize_for_json(item) for item in obj]
+    # Fallback: try to convert to string
+    return str(obj)
+
+
 class DecimalEncoder(json.JSONEncoder):
-    """JSON encoder that handles Decimal objects."""
+    """JSON encoder that handles Decimal, datetime, dataclass, and Enum objects."""
 
     def default(self, obj):
         if isinstance(obj, Decimal):
             return str(obj)
         if isinstance(obj, datetime):
             return obj.isoformat()
+        # Handle Enum types
+        if hasattr(obj, 'value') and hasattr(obj.__class__, '__members__'):
+            return obj.value
+        # Handle dataclass objects
+        if hasattr(obj, '__dataclass_fields__'):
+            return _serialize_for_json(obj)
         return super().default(obj)
 
 
