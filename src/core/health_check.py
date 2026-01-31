@@ -9,6 +9,7 @@ Provides:
 - Health status reporting
 """
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
@@ -184,7 +185,9 @@ class HealthChecker:
         try:
             # Use get_system_status or similar lightweight call
             # For now, simulate with a balance check
-            await self._rest_client.get_balance()
+            # Run synchronous method in executor to avoid blocking event loop
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self._rest_client.get_balance)
 
             latency_ms = (time.time() - start_time) * 1000
             self._record_latency("api", latency_ms)

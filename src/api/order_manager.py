@@ -481,6 +481,12 @@ class OrderManager:
             order.state = OrderState.CANCELED
             return True
 
+        # Handle paper trading orders (PAPER-xxx) locally without API call
+        if order.order_id.startswith("PAPER-"):
+            order.state = OrderState.CANCELED
+            logger.info(f"Canceled paper order {grid_id} ({order.order_id})")
+            return True
+
         if not order.is_active:
             logger.debug(f"Order {grid_id} not active, cannot cancel")
             return False
