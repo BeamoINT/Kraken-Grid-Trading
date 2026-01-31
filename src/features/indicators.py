@@ -609,8 +609,10 @@ def ichimoku_cloud(
     senkou_b_low = low.rolling(window=senkou_b_period, min_periods=senkou_b_period).min()
     senkou_b = ((senkou_b_high + senkou_b_low) / 2).shift(kijun_period)
 
-    # Chikou Span (Lagging Span) - shifted backward by kijun_period
-    chikou = close.shift(-kijun_period)
+    # Chikou Span (Lagging Span) - compare current price to past price
+    # NOTE: Original used shift(-kijun_period) which looked into the FUTURE (data leakage!)
+    # Fixed to shift(+kijun_period) for historical comparison (current close vs close kijun periods ago)
+    chikou = close.shift(kijun_period)
 
     return {
         'tenkan': tenkan,

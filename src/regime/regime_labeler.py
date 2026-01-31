@@ -39,28 +39,37 @@ class RegimeLabeler:
     """
     Labels market data with regime classifications.
 
-    Uses a rules-based approach to create training labels:
-    1. Check volatility level (percentile)
-    2. Check trend strength (ADX)
-    3. Check trend direction (+DI/-DI)
-    4. Check for breakouts (price/volume)
+    Supports two labeling modes:
+    1. "indicator" (default): Uses current indicator values (ADX, DI, etc.)
+       - Good for real-time inference where future is unknown
+       - WARNING: Creates target leakage if used for training!
 
-    The labels can then be used for supervised ML training.
+    2. "outcome": Uses future price returns for labels
+       - Should be used for ML training
+       - No target leakage - labels are based on future, features on past
+
+    For ML training, ALWAYS use mode="outcome" to avoid the model
+    simply learning to replicate the indicator-based labeling rules.
     """
 
     def __init__(
         self,
-        # ADX thresholds
+        # ADX thresholds (for indicator mode)
         adx_trending_threshold: float = 25.0,
         adx_strong_trend_threshold: float = 40.0,
         # Volatility thresholds
         high_vol_percentile: float = 80.0,
         low_vol_percentile: float = 20.0,
-        # Breakout detection
+        # Breakout detection (for indicator mode)
         breakout_vol_multiplier: float = 2.0,
         breakout_atr_multiplier: float = 1.5,
         # Forward look for performance labeling
         forward_look: int = 5,
+        # Labeling mode: "indicator" or "outcome"
+        mode: str = "indicator",
+        # Outcome-based parameters
+        outcome_lookahead: int = 20,
+        outcome_trend_threshold: float = 0.02,
     ):
         """
         Initialize the regime labeler.
@@ -73,7 +82,14 @@ class RegimeLabeler:
             breakout_vol_multiplier: Volume multiple for breakout (default: 2x)
             breakout_atr_multiplier: ATR multiple for breakout (default: 1.5x)
             forward_look: Candles to look forward for labeling (default: 5)
+            mode: Labeling mode - "indicator" (default) or "outcome"
+            outcome_lookahead: Periods to look ahead for outcome-based labels (default: 20)
+            outcome_trend_threshold: Return threshold for trending in outcome mode (default: 0.02)
         """
+        if mode not in ("indicator", "outcome"):
+            raise ValueError(f"Invalid mode '{mode}'. Use 'indicator' or 'outcome'.")
+
+        self.mode = mode
         self.adx_trending = adx_trending_threshold
         self.adx_strong = adx_strong_trend_threshold
         self.high_vol_pct = high_vol_percentile
@@ -81,6 +97,14 @@ class RegimeLabeler:
         self.breakout_vol_mult = breakout_vol_multiplier
         self.breakout_atr_mult = breakout_atr_multiplier
         self.forward_look = forward_look
+        self.outcome_lookahead = outcome_lookahead
+        self.outcome_trend_threshold = outcome_trend_threshold
+
+        if mode == "indicator":
+            logger.warning(
+                "Using indicator-based labeling. This creates target leakage for ML training! "
+                "Use mode='outcome' for training data."
+            )
 
     def _check_breakout(
         self,
@@ -172,27 +196,13 @@ class RegimeLabeler:
 
         return is_trending, trend_direction
 
-    def label_regimes(
-        self,
-        df: pd.DataFrame,
-    ) -> pd.DataFrame:
+    def _label_indicator_based(self, df: pd.DataFrame) -> pd.Series:
         """
-        Label each row with a market regime.
+        Label using current indicator values (original method).
 
-        Priority order:
-        1. BREAKOUT (highest priority - unusual market condition)
-        2. HIGH_VOLATILITY (elevated risk environment)
-        3. TRENDING_UP/DOWN (directional market)
-        4. RANGING (default - no strong trend)
-
-        Args:
-            df: DataFrame with computed features
-
-        Returns:
-            DataFrame with 'regime' column added
+        WARNING: This creates target leakage for ML training!
+        Use only for real-time inference.
         """
-        result = df.copy()
-
         # Initialize as RANGING (default)
         regime = pd.Series(MarketRegime.RANGING, index=df.index)
 
@@ -225,8 +235,79 @@ class RegimeLabeler:
             MarketRegime.BREAKOUT
         )
 
+        return regime
+
+    def _label_outcome_based(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Label using future price returns (outcome-based).
+
+        This is the correct approach for ML training - labels are based
+        on what the market WILL DO, not current indicator values.
+        """
+        if "close" not in df.columns:
+            raise ValueError("DataFrame must have 'close' column for outcome-based labeling")
+
+        close = df["close"]
+
+        # Calculate future returns
+        future_return = close.shift(-self.outcome_lookahead) / close - 1
+
+        # Calculate future volatility
+        returns = close.pct_change()
+        future_vol = returns.rolling(window=self.outcome_lookahead).std().shift(-self.outcome_lookahead)
+        vol_threshold = future_vol.quantile(self.high_vol_pct / 100.0)
+
+        # Initialize as RANGING
+        regime = pd.Series(MarketRegime.RANGING, index=df.index)
+
+        # HIGH_VOLATILITY: Future volatility is high
+        regime[future_vol > vol_threshold] = MarketRegime.HIGH_VOLATILITY
+
+        # TRENDING_UP: Price goes up significantly
+        regime[future_return > self.outcome_trend_threshold] = MarketRegime.TRENDING_UP
+
+        # TRENDING_DOWN: Price goes down significantly
+        regime[future_return < -self.outcome_trend_threshold] = MarketRegime.TRENDING_DOWN
+
+        # BREAKOUT: Very large move in either direction (2x threshold)
+        breakout_threshold = self.outcome_trend_threshold * 2
+        regime[future_return.abs() > breakout_threshold] = MarketRegime.BREAKOUT
+
+        return regime
+
+    def label_regimes(
+        self,
+        df: pd.DataFrame,
+    ) -> pd.DataFrame:
+        """
+        Label each row with a market regime.
+
+        Uses either indicator-based or outcome-based labeling depending on mode.
+
+        For ML training, use mode="outcome" to avoid target leakage.
+        For real-time inference, use mode="indicator".
+
+        Priority order (both modes):
+        1. BREAKOUT (highest priority - unusual market condition)
+        2. HIGH_VOLATILITY (elevated risk environment)
+        3. TRENDING_UP/DOWN (directional market)
+        4. RANGING (default - no strong trend)
+
+        Args:
+            df: DataFrame with computed features
+
+        Returns:
+            DataFrame with 'regime' column added
+        """
+        result = df.copy()
+
+        if self.mode == "outcome":
+            regime = self._label_outcome_based(df)
+        else:
+            regime = self._label_indicator_based(df)
+
         result["regime"] = regime.astype(int)
-        result["regime_name"] = regime.map(lambda x: MarketRegime(x).name)
+        result["regime_name"] = regime.map(lambda x: MarketRegime(x).name if pd.notna(x) else None)
 
         return result
 

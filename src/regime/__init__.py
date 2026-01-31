@@ -29,9 +29,15 @@ from .regime_labeler import (
     RegimeLabeler,
     RegimeLabelPipeline,
 )
+from .outcome_labeler import (
+    OutcomeBasedLabeler,
+    OutcomeBasedLabelPipeline,
+)
 
 __all__ = [
     "MarketRegime",
     "RegimeLabeler",
     "RegimeLabelPipeline",
+    "OutcomeBasedLabeler",
+    "OutcomeBasedLabelPipeline",
 ]

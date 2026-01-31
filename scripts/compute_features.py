@@ -31,6 +31,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.features.feature_pipeline import FeaturePipeline
 from src.regime.regime_labeler import RegimeLabelPipeline, RegimeLabeler, MarketRegime
+from src.regime.outcome_labeler import OutcomeBasedLabeler, OutcomeBasedLabelPipeline
 
 logging.basicConfig(
     level=logging.INFO,
@@ -110,8 +111,12 @@ def label_regimes(
     timeframes: Optional[List[str]],
     features_path: Path,
     labels_path: Path,
+    ohlcv_path: Path,
+    labeling_mode: str = "outcome",
     adx_threshold: float = 25.0,
     high_vol_percentile: float = 80.0,
+    outcome_lookahead: int = 20,
+    outcome_trend_threshold: float = 0.02,
 ) -> dict:
     """
     Label features with market regimes.
@@ -121,54 +126,113 @@ def label_regimes(
         timeframes: List of timeframes (None for all)
         features_path: Path to computed features
         labels_path: Path for labeled data output
-        adx_threshold: ADX threshold for trending
+        ohlcv_path: Path to OHLCV data (for close prices in outcome mode)
+        labeling_mode: "outcome" (default, for ML training) or "indicator" (for inference)
+        adx_threshold: ADX threshold for trending (indicator mode)
         high_vol_percentile: Percentile for high volatility
+        outcome_lookahead: Periods to look ahead (outcome mode)
+        outcome_trend_threshold: Return threshold for trending (outcome mode)
 
     Returns:
         Dict with labeling results
     """
-    labeler = RegimeLabeler(
-        adx_trending_threshold=adx_threshold,
-        high_vol_percentile=high_vol_percentile,
-    )
-
-    pipeline = RegimeLabelPipeline(
-        features_path=features_path,
-        labels_path=labels_path,
-        labeler=labeler,
-    )
-
     results = {}
 
-    for pair in pairs:
-        logger.info(f"Labeling regimes for {pair}...")
+    if labeling_mode == "outcome":
+        logger.info("Using OUTCOME-based labeling (recommended for ML training)")
+        labeler = OutcomeBasedLabeler(
+            lookahead=outcome_lookahead,
+            trend_threshold=outcome_trend_threshold,
+            vol_percentile=high_vol_percentile,
+        )
+        pipeline = OutcomeBasedLabelPipeline(
+            features_path=features_path,
+            labels_path=labels_path,
+            labeler=labeler,
+        )
 
-        try:
-            pair_results = pipeline.label_and_save(
-                pair=pair,
-                timeframes=timeframes,
-            )
+        for pair in pairs:
+            logger.info(f"Labeling regimes for {pair}...")
+            results[pair] = {}
 
-            results[pair] = pair_results
+            # Get available timeframes
+            if timeframes is None:
+                available_tfs = []
+                for tf_dir in features_path.iterdir():
+                    if tf_dir.is_dir() and (tf_dir / pair / "features.parquet").exists():
+                        available_tfs.append(tf_dir.name)
+                tfs = available_tfs
+            else:
+                tfs = timeframes
 
-            for tf, tf_result in pair_results.items():
-                if "error" in tf_result:
-                    logger.error(f"  {tf}: {tf_result['error']}")
-                else:
-                    validation = tf_result.get("validation", {})
-                    logger.info(f"  {tf}: {tf_result['rows']} rows")
-                    logger.info(f"    Class balance: {validation.get('is_balanced', 'N/A')}")
-                    logger.info(f"    Avg regime duration: {validation.get('avg_regime_duration', 'N/A'):.1f} candles")
+            for tf in tfs:
+                try:
+                    tf_result = pipeline.label_and_save(
+                        pair=pair,
+                        timeframe=tf,
+                        ohlcv_path=ohlcv_path,
+                    )
+                    results[pair][tf] = tf_result
 
-                    # Log regime distribution
-                    stats = tf_result.get("stats", {})
-                    for regime_name, regime_stats in stats.items():
-                        pct = regime_stats.get("percentage", 0)
-                        logger.info(f"    {regime_name}: {pct:.1f}%")
+                    if "error" in tf_result:
+                        logger.error(f"  {tf}: {tf_result['error']}")
+                    else:
+                        stats = tf_result.get("stats", {})
+                        logger.info(f"  {tf}: {tf_result['rows']} rows (dropped {tf_result.get('dropped_nan', 0)} NaN)")
+                        logger.info(f"    Balanced: {stats.get('is_balanced', 'N/A')}")
+                        for regime in MarketRegime:
+                            regime_stats = stats.get(regime.name, {})
+                            pct = regime_stats.get("percentage", 0)
+                            logger.info(f"    {regime.name}: {pct:.1f}%")
 
-        except Exception as e:
-            logger.error(f"Error labeling regimes for {pair}: {e}")
-            results[pair] = {"error": str(e)}
+                except Exception as e:
+                    logger.error(f"  {tf}: Error - {e}")
+                    results[pair][tf] = {"error": str(e)}
+
+    else:
+        # Indicator-based labeling (original method)
+        logger.warning("Using INDICATOR-based labeling. This causes target leakage for ML training!")
+        labeler = RegimeLabeler(
+            adx_trending_threshold=adx_threshold,
+            high_vol_percentile=high_vol_percentile,
+            mode="indicator",
+        )
+
+        pipeline = RegimeLabelPipeline(
+            features_path=features_path,
+            labels_path=labels_path,
+            labeler=labeler,
+        )
+
+        for pair in pairs:
+            logger.info(f"Labeling regimes for {pair}...")
+
+            try:
+                pair_results = pipeline.label_and_save(
+                    pair=pair,
+                    timeframes=timeframes,
+                )
+
+                results[pair] = pair_results
+
+                for tf, tf_result in pair_results.items():
+                    if "error" in tf_result:
+                        logger.error(f"  {tf}: {tf_result['error']}")
+                    else:
+                        validation = tf_result.get("validation", {})
+                        logger.info(f"  {tf}: {tf_result['rows']} rows")
+                        logger.info(f"    Class balance: {validation.get('is_balanced', 'N/A')}")
+                        logger.info(f"    Avg regime duration: {validation.get('avg_regime_duration', 'N/A'):.1f} candles")
+
+                        # Log regime distribution
+                        stats = tf_result.get("stats", {})
+                        for regime_name, regime_stats in stats.items():
+                            pct = regime_stats.get("percentage", 0)
+                            logger.info(f"    {regime_name}: {pct:.1f}%")
+
+            except Exception as e:
+                logger.error(f"Error labeling regimes for {pair}: {e}")
+                results[pair] = {"error": str(e)}
 
     return results
 
@@ -345,6 +409,29 @@ Examples:
     )
 
     parser.add_argument(
+        "--labeling-mode",
+        type=str,
+        choices=["outcome", "indicator"],
+        default="outcome",
+        help="Labeling mode: 'outcome' (default, uses future returns - correct for ML) "
+             "or 'indicator' (uses current indicators - causes target leakage!)",
+    )
+
+    parser.add_argument(
+        "--outcome-lookahead",
+        type=int,
+        default=20,
+        help="Periods to look ahead for outcome-based labeling (default: 20)",
+    )
+
+    parser.add_argument(
+        "--outcome-trend-threshold",
+        type=float,
+        default=0.02,
+        help="Return threshold for trending in outcome mode (default: 0.02 = 2%%)",
+    )
+
+    parser.add_argument(
         "--summary",
         action="store_true",
         help="Show summary of computed features and labels",
@@ -409,8 +496,12 @@ Examples:
             timeframes=args.timeframes,
             features_path=args.features_path,
             labels_path=args.labels_path,
+            ohlcv_path=args.ohlcv_path,
+            labeling_mode=args.labeling_mode,
             adx_threshold=args.adx_threshold,
             high_vol_percentile=args.high_vol_percentile,
+            outcome_lookahead=args.outcome_lookahead,
+            outcome_trend_threshold=args.outcome_trend_threshold,
         )
 
     logger.info("")
