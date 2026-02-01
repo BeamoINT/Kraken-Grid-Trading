@@ -773,11 +773,26 @@ class Orchestrator:
             # Get latest row
             latest = features_df.iloc[-1:].copy()
 
+            # Get expected feature columns from the model
+            expected_features = self._classifier.feature_names if hasattr(self._classifier, 'feature_names') else None
+
+            # Get actual feature columns
+            feature_cols = [c for c in latest.columns if c not in [
+                'timestamp', 'open', 'high', 'low', 'close', 'volume'
+            ]]
+
+            # Fill missing features with neutral defaults (0.5 for ratios, 0 otherwise)
+            if expected_features:
+                for feat in expected_features:
+                    if feat not in latest.columns:
+                        # Use 0.5 for ratio features (neutral), 0 for others
+                        default_val = 0.5 if 'ratio' in feat.lower() else 0.0
+                        latest[feat] = default_val
+                        logger.debug(f"Filled missing feature '{feat}' with {default_val}")
+                feature_cols = expected_features
+
             # Scale features
             if self._scaler:
-                feature_cols = [c for c in latest.columns if c not in [
-                    'timestamp', 'open', 'high', 'low', 'close', 'volume'
-                ]]
                 latest[feature_cols] = self._scaler.transform(latest[feature_cols])
 
             # Predict
