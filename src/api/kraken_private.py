@@ -786,6 +786,49 @@ class KrakenPrivateClient:
         return result
 
     # ==========================================
+    # PUBLIC MARKET DATA METHODS
+    # ==========================================
+
+    def get_ticker(self, pair: str) -> Optional[Dict[str, Any]]:
+        """
+        Get current ticker data for a trading pair.
+
+        This is a public endpoint that doesn't require authentication.
+
+        Args:
+            pair: Trading pair (e.g., "XBTUSD")
+
+        Returns:
+            Dict mapping pair to ticker data with keys:
+            - 'a': ask [price, whole_lot_volume, lot_volume]
+            - 'b': bid [price, whole_lot_volume, lot_volume]
+            - 'c': last trade [price, volume]
+            - 'v': volume [today, 24h]
+            - 'p': vwap [today, 24h]
+            - 't': trades [today, 24h]
+            - 'l': low [today, 24h]
+            - 'h': high [today, 24h]
+            - 'o': open
+        """
+        url = f"{self.BASE_URL}/0/public/Ticker"
+        params = {"pair": pair}
+
+        try:
+            response = self._session.get(url, params=params, timeout=self._timeout)
+            response.raise_for_status()
+            result = response.json()
+
+            if result.get("error"):
+                logger.warning(f"Ticker API error: {result['error']}")
+                return None
+
+            return result.get("result", {})
+
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Failed to fetch ticker: {e}")
+            return None
+
+    # ==========================================
     # UTILITY METHODS
     # ==========================================
 
