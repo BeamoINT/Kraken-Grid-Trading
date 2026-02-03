@@ -115,15 +115,12 @@ class FeaturePipeline:
 
         logger.info(f"Computing features for {len(df)} candles...")
 
-        # Start with timestamp
-        features = pd.DataFrame({"timestamp": df["timestamp"]})
+        # Collect all feature DataFrames for single concat (avoids fragmentation)
+        feature_dfs = []
 
-        # OHLCV reference columns (for debugging/analysis)
-        features["open"] = df["open"]
-        features["high"] = df["high"]
-        features["low"] = df["low"]
-        features["close"] = df["close"]
-        features["volume"] = df["volume"]
+        # Base OHLCV columns
+        base_df = df[["timestamp", "open", "high", "low", "close", "volume"]].copy()
+        feature_dfs.append(base_df)
 
         # Price features
         logger.debug("Computing price features...")
@@ -133,8 +130,7 @@ class FeaturePipeline:
             medium_window=self.medium_window,
             long_window=self.long_window,
         )
-        for col in price_feats.columns:
-            features[f"price_{col}"] = price_feats[col]
+        feature_dfs.append(price_feats.add_prefix("price_"))
 
         # Volume features
         logger.debug("Computing volume features...")
@@ -143,8 +139,7 @@ class FeaturePipeline:
             short_window=self.short_window,
             medium_window=self.medium_window,
         )
-        for col in volume_feats.columns:
-            features[f"vol_{col}"] = volume_feats[col]
+        feature_dfs.append(volume_feats.add_prefix("vol_"))
 
         # Volatility features
         logger.debug("Computing volatility features...")
@@ -155,8 +150,7 @@ class FeaturePipeline:
             vol_period=20,
             lookback=100,
         )
-        for col in volatility_feats.columns:
-            features[f"volat_{col}"] = volatility_feats[col]
+        feature_dfs.append(volatility_feats.add_prefix("volat_"))
 
         # Trend features
         logger.debug("Computing trend features...")
@@ -167,8 +161,10 @@ class FeaturePipeline:
             medium_ma=self.medium_window,
             long_ma=self.long_window,
         )
-        for col in trend_feats.columns:
-            features[f"trend_{col}"] = trend_feats[col]
+        feature_dfs.append(trend_feats.add_prefix("trend_"))
+
+        # Single concat avoids DataFrame fragmentation
+        features = pd.concat(feature_dfs, axis=1)
 
         # Add lagged features for key indicators
         logger.debug("Computing lagged features...")
@@ -210,10 +206,17 @@ class FeaturePipeline:
             "trend_macd_histogram",
         ]
 
+        # Collect all lagged columns (avoids DataFrame fragmentation)
+        lagged_cols = {}
         for feature in key_features:
             if feature in df.columns:
                 for lag in lags:
-                    df[f"{feature}_lag{lag}"] = df[feature].shift(lag)
+                    lagged_cols[f"{feature}_lag{lag}"] = df[feature].shift(lag)
+
+        # Single concat of all lagged features
+        if lagged_cols:
+            lagged_df = pd.DataFrame(lagged_cols, index=df.index)
+            df = pd.concat([df, lagged_df], axis=1)
 
         return df
 

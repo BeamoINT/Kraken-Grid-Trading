@@ -18,15 +18,22 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import numpy as np
+
 logger = logging.getLogger(__name__)
 
 
 def _serialize_for_json(obj: Any) -> Any:
-    """Recursively serialize an object for JSON, handling Decimal, datetime, Enum, dataclass."""
+    """Recursively serialize an object for JSON, handling Decimal, datetime, Enum, dataclass, numpy."""
     if obj is None:
         return None
     if isinstance(obj, (str, int, float, bool)):
         return obj
+    # Handle numpy types before Decimal check
+    if isinstance(obj, (np.integer, np.floating)):
+        return obj.item()
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
     if isinstance(obj, Decimal):
         return str(obj)
     if isinstance(obj, datetime):
@@ -48,9 +55,14 @@ def _serialize_for_json(obj: Any) -> Any:
 
 
 class DecimalEncoder(json.JSONEncoder):
-    """JSON encoder that handles Decimal, datetime, dataclass, and Enum objects."""
+    """JSON encoder that handles Decimal, datetime, dataclass, Enum, and numpy objects."""
 
     def default(self, obj):
+        # Handle numpy types
+        if isinstance(obj, (np.integer, np.floating)):
+            return obj.item()
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
         if isinstance(obj, Decimal):
             return str(obj)
         if isinstance(obj, datetime):
