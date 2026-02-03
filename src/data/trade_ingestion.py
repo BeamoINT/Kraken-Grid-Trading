@@ -195,6 +195,7 @@ class TradeIngestionPipeline:
         pair: str,
         start_from: Optional[str] = None,
         end_timestamp: Optional[float] = None,
+        max_trades: Optional[int] = None,
         progress_callback: Optional[Callable[[int, float], None]] = None,
     ) -> Dict[str, Any]:
         """
@@ -205,6 +206,7 @@ class TradeIngestionPipeline:
             start_from: Trade ID to start from. Use "0" for beginning of history.
                        If None, resumes from checkpoint or starts from "0".
             end_timestamp: Stop when reaching this Unix timestamp (optional)
+            max_trades: Maximum number of trades to download (optional)
             progress_callback: Called with (total_trades, last_timestamp) periodically
 
         Returns:
@@ -276,6 +278,11 @@ class TradeIngestionPipeline:
                 # Check for no new data (same last_id means we're caught up)
                 if new_last_id == last_id:
                     logger.info("Reached end of available data")
+                    break
+
+                # Check max_trades limit
+                if max_trades and total_trades >= max_trades:
+                    logger.info(f"Reached max_trades limit ({max_trades})")
                     break
 
                 last_id = new_last_id
