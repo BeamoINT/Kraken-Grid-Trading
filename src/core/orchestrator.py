@@ -667,6 +667,23 @@ class Orchestrator:
                 if self._order_manager:
                     self._order_manager.update_position_mark(self._current_price)
 
+                # Check paper trading fills
+                if self._config.paper_trading and self._order_manager:
+                    filled = self._order_manager.check_paper_fills(self._current_price)
+                    if filled:
+                        for order in filled:
+                            logger.info(f"Paper order filled: {order.grid_id} {order.side.name} @ {order.avg_fill_price}")
+                        # Record fills in state manager
+                        if self._state_manager:
+                            for order in filled:
+                                self._state_manager.save_fill(
+                                    order_id=order.order_id,
+                                    fill_volume=order.filled_volume,
+                                    fill_price=order.avg_fill_price,
+                                    fee=order.fees,
+                                    timestamp=datetime.utcnow(),
+                                )
+
                 # Deploy grid on first price if not already deployed
                 if old_price is None and self._grid_executor and not self._grid_executor.is_trading:
                     logger.info("First price received via WebSocket, deploying grid")
@@ -945,6 +962,11 @@ class Orchestrator:
                         # Pause if critical
                         if health.overall_level == HealthLevel.CRITICAL:
                             await self.pause("Health check critical")
+                    else:
+                        # Auto-resume if health recovered and we're paused
+                        if self._state == OrchestratorState.PAUSED:
+                            logger.info("Health recovered, resuming trading")
+                            await self.resume()
 
                 except Exception as e:
                     logger.error(f"Health check error: {e}")

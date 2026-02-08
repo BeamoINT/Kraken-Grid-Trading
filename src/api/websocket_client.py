@@ -203,7 +203,7 @@ class KrakenWebSocketClient:
         Args:
             private: Connect to private (authenticated) endpoint
         """
-        if self._state not in (ConnectionState.DISCONNECTED, ConnectionState.CLOSED):
+        if self._state not in (ConnectionState.DISCONNECTED, ConnectionState.CLOSED, ConnectionState.RECONNECTING):
             logger.warning(f"Cannot connect in state {self._state}")
             return
 

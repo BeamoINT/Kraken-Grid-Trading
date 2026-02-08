@@ -598,6 +598,66 @@ class OrderManager:
 
         return changes
 
+    def check_paper_fills(self, current_price: Decimal) -> List[GridOrder]:
+        """
+        Simulate fills for paper trading orders based on current price.
+
+        A buy order fills when price drops to or below the limit price.
+        A sell order fills when price rises to or above the limit price.
+
+        Args:
+            current_price: Current market price
+
+        Returns:
+            List of orders that were filled
+        """
+        filled_orders = []
+
+        for order in list(self._orders.values()):
+            if not order.is_active:
+                continue
+            if not order.order_id or not order.order_id.startswith("PAPER-"):
+                continue
+
+            should_fill = False
+            if order.side == GridOrderType.BUY and current_price <= order.price:
+                should_fill = True
+            elif order.side == GridOrderType.SELL and current_price >= order.price:
+                should_fill = True
+
+            if should_fill:
+                fill_price = order.price
+                fill_volume = order.volume
+
+                order.filled_volume = fill_volume
+                order.avg_fill_price = fill_price
+                order.state = OrderState.FILLED
+                order.filled_at = time.time()
+
+                # Simulate a small fee (0.26% taker fee for Kraken)
+                fee = fill_volume * fill_price * Decimal("0.0026")
+                order.fees = fee
+
+                # Update position
+                realized = self._position.update_from_fill(
+                    side=order.side,
+                    volume=fill_volume,
+                    price=fill_price,
+                    fee=fee,
+                )
+
+                if self._on_fill:
+                    self._on_fill(order, fill_volume, fill_price)
+
+                logger.info(
+                    f"Paper fill: {order.grid_id} {order.side.name} {fill_volume} @ {fill_price}, "
+                    f"realized P&L: {realized}"
+                )
+
+                filled_orders.append(order)
+
+        return filled_orders
+
     def _update_from_exchange(
         self,
         order: GridOrder,
