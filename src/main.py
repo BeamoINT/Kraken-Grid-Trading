@@ -308,6 +308,11 @@ async def main(args: argparse.Namespace) -> int:
             if orchestrator.state_manager:
                 orchestrator.state_manager.clear_state()
                 logger.info("Cleared saved state")
+            # Also reset in-memory risk manager state loaded during initialize()
+            if orchestrator._risk_manager:
+                orchestrator._risk_manager._is_paused = False
+                orchestrator._risk_manager._is_halted = False
+                orchestrator._risk_manager._pause_reason = ""
 
         # Start
         logger.info("Starting orchestrator...")
